@@ -27,3 +27,6 @@ export type {
   GridLayoutDefinition,
   TextStreamData,
 } from '@livekit/components-core';
+
+// Export types from React package
+export type { PreJoinValues } from './prefabs/PreJoin';

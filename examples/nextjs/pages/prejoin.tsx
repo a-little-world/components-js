@@ -26,7 +26,11 @@ const PreJoinExample: NextPage = () => {
           values.audioDeviceId;
         }}
         onValidate={(values) => {
+          console.log('validate values', values);
           return true;
+        }}
+        onError={(error) => {
+          console.log('error', error);
         }}
       />
     </div>

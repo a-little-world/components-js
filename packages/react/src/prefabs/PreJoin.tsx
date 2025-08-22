@@ -20,10 +20,45 @@ import { TrackToggle } from '../components/controls/TrackToggle';
 import type { LocalUserChoices } from '@livekit/components-core';
 import { log } from '@livekit/components-core';
 import { ParticipantPlaceholder } from '../assets/images';
-import { useMediaDevices, usePersistentUserChoices } from '../hooks';
+import { useMediaDevices, usePersistentUserChoices, useDeviceState } from '../hooks';
 import { useWarnAboutMissingStyles } from '../hooks/useWarnAboutMissingStyles';
 import { roomOptionsStringifyReplacer } from '../utils';
 import { useSelectedDevice } from '../hooks/useSelectedDevice';
+
+/**
+ * Enhanced error class that includes device information for better error handling.
+ * This extends the original error to preserve all its properties while adding device context.
+ * @public
+ */
+export class DevicePermissionError extends Error {
+  public deviceType: 'audio' | 'video';
+  public deviceId?: string;
+
+  constructor(originalError: Error, deviceType: 'audio' | 'video', deviceId?: string) {
+    // Call the parent Error constructor with the original error's message
+    super(originalError.message);
+
+    // Preserve all properties from the original error
+    Object.assign(this, originalError);
+
+    // Add our custom properties
+    this.deviceType = deviceType;
+    this.deviceId = deviceId;
+    this.name = 'DevicePermissionError';
+
+    // Maintain proper prototype chain for instanceof checks
+    Object.setPrototypeOf(this, DevicePermissionError.prototype);
+  }
+}
+
+/**
+ * Extended values type that includes both user choices and device availability
+ * @public
+ */
+export type PreJoinValues = LocalUserChoices & {
+  audioAvailable: boolean;
+  videoAvailable: boolean;
+};
 
 /**
  * Props for the PreJoin component.
@@ -31,13 +66,17 @@ import { useSelectedDevice } from '../hooks/useSelectedDevice';
  */
 export interface PreJoinProps
   extends Omit<React.HTMLAttributes<HTMLDivElement>, 'onSubmit' | 'onError'> {
-  /** This function is called with the `LocalUserChoices` if validation is passed. */
-  onSubmit?: (values: LocalUserChoices) => void;
+  /** This function is called with the `PreJoinValues` if validation is passed. */
+  onSubmit?: (values: PreJoinValues) => void;
   /**
    * Provide your custom validation function. Only if validation is successful the user choices are past to the onSubmit callback.
    */
-  onValidate?: (values: LocalUserChoices) => boolean;
-  onError?: (error: Error) => void;
+  onValidate?: (values: PreJoinValues) => boolean;
+  /**
+   * Called when an error occurs during device setup. The error will be a `DevicePermissionError`
+   * that includes information about which device type failed and the original error.
+   */
+  onError?: (error: DevicePermissionError) => void;
   /** Prefill the input form with initial values. */
   defaults?: Partial<LocalUserChoices>;
   /** Display a debug window for your convenience. */
@@ -58,7 +97,7 @@ export interface PreJoinProps
 /** @public */
 export function usePreviewTracks(
   options: CreateLocalTracksOptions,
-  onError?: (err: Error) => void,
+  onError?: (err: DevicePermissionError) => void,
 ) {
   const [audioTrack, setAudioTrack] = React.useState<LocalTrack | undefined>();
   const [videoTrack, setVideoTrack] = React.useState<LocalTrack | undefined>();
@@ -132,7 +171,9 @@ export function usePreviewTracks(
           }
         } catch (e: unknown) {
           if (onError && e instanceof Error) {
-            onError(e);
+            // Create enhanced error with device context
+            const enhancedError = new DevicePermissionError(e, trackType, trackOption?.deviceId);
+            onError(enhancedError);
           } else {
             log.error(e);
           }
@@ -180,7 +221,7 @@ export function usePreviewDevice<T extends LocalVideoTrack | LocalAudioTrack>(
   deviceId: string,
   kind: 'videoinput' | 'audioinput',
 ) {
-  const [deviceError, setDeviceError] = React.useState<Error | null>(null);
+  const [deviceError, setDeviceError] = React.useState<DevicePermissionError | null>(null);
   const [isCreatingTrack, setIsCreatingTrack] = React.useState<boolean>(false);
 
   const devices = useMediaDevices({ kind });
@@ -213,7 +254,13 @@ export function usePreviewDevice<T extends LocalVideoTrack | LocalAudioTrack>(
       setLocalTrack(track as T);
     } catch (e) {
       if (e instanceof Error) {
-        setDeviceError(e);
+        // Create enhanced error with device context
+        const enhancedError = new DevicePermissionError(
+          e,
+          kind === 'videoinput' ? 'video' : 'audio',
+          deviceId,
+        );
+        setDeviceError(enhancedError);
       }
     }
   };
@@ -315,6 +362,9 @@ export function PreJoin({
     preventLoad: !persistUserChoices,
   });
 
+  // Get real-time device state
+  const { deviceStatus, isDeviceAvailable } = useDeviceState();
+
   const [userChoices, setUserChoices] = React.useState(initialUserChoices);
 
   // Initialize device settings
@@ -323,6 +373,19 @@ export function PreJoin({
   const [audioDeviceId, setAudioDeviceId] = React.useState<string>(userChoices.audioDeviceId);
   const [videoDeviceId, setVideoDeviceId] = React.useState<string>(userChoices.videoDeviceId);
   const [username, setUsername] = React.useState(userChoices.username);
+
+  // Automatically disable devices that aren't available
+  React.useEffect(() => {
+    if (!isDeviceAvailable('audio') && audioEnabled) {
+      setAudioEnabled(false);
+    }
+  }, [isDeviceAvailable, audioEnabled]);
+
+  React.useEffect(() => {
+    if (!isDeviceAvailable('video') && videoEnabled) {
+      setVideoEnabled(false);
+    }
+  }, [isDeviceAvailable, videoEnabled]);
 
   // Save user choices to persistent storage.
   React.useEffect(() => {
@@ -343,10 +406,14 @@ export function PreJoin({
 
   const tracks = usePreviewTracks(
     {
-      audio: audioEnabled ? { deviceId: initialUserChoices.audioDeviceId } : false,
-      video: videoEnabled
-        ? { deviceId: initialUserChoices.videoDeviceId, processor: videoProcessor }
-        : false,
+      audio:
+        audioEnabled && isDeviceAvailable('audio')
+          ? { deviceId: initialUserChoices.audioDeviceId }
+          : false,
+      video:
+        videoEnabled && isDeviceAvailable('video')
+          ? { deviceId: initialUserChoices.videoDeviceId, processor: videoProcessor }
+          : false,
     },
     onError,
   );
@@ -401,13 +468,19 @@ export function PreJoin({
 
   const handleValidation = React.useCallback(
     (values: LocalUserChoices) => {
+      const extendedValues: PreJoinValues = {
+        ...values,
+        audioAvailable: isDeviceAvailable('audio'),
+        videoAvailable: isDeviceAvailable('video'),
+      };
+
       if (typeof onValidate === 'function') {
-        return onValidate(values);
+        return onValidate(extendedValues);
       } else {
         return values.username !== '';
       }
     },
-    [onValidate],
+    [onValidate, isDeviceAvailable],
   );
 
   React.useEffect(() => {
@@ -417,16 +490,30 @@ export function PreJoin({
       videoDeviceId,
       audioEnabled,
       audioDeviceId,
+      deviceStatus,
     };
     setUserChoices(newUserChoices);
     setIsValid(handleValidation(newUserChoices));
-  }, [username, videoEnabled, handleValidation, audioEnabled, audioDeviceId, videoDeviceId]);
+  }, [
+    username,
+    videoEnabled,
+    handleValidation,
+    audioEnabled,
+    audioDeviceId,
+    videoDeviceId,
+    deviceStatus,
+  ]);
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (handleValidation(userChoices)) {
       if (typeof onSubmit === 'function') {
-        onSubmit(userChoices);
+        const extendedValues: PreJoinValues = {
+          ...userChoices,
+          audioAvailable: isDeviceAvailable('audio'),
+          videoAvailable: isDeviceAvailable('video'),
+        };
+        onSubmit(extendedValues);
       }
     } else {
       log.warn('Validation failed with: ', userChoices);
@@ -462,7 +549,7 @@ export function PreJoin({
           <MediaDeviceMenu
             initialSelection={audioDeviceId}
             kind="audioinput"
-            disabled={Boolean(!selectedAudioDevice)}
+            disabled={Boolean(!selectedAudioDevice) || !isDeviceAvailable('audio')}
             tracks={{ audioinput: audioTrack }}
             onActiveDeviceChange={(_, id) => setAudioDeviceId(id)}
           />
@@ -481,7 +568,7 @@ export function PreJoin({
           <MediaDeviceMenu
             initialSelection={videoDeviceId}
             kind="videoinput"
-            disabled={Boolean(!selectedAudioDevice)}
+            disabled={Boolean(!selectedAudioDevice) || !isDeviceAvailable('video')}
             tracks={{ videoinput: videoTrack }}
             onActiveDeviceChange={(_, id) => setVideoDeviceId(id)}
           />
@@ -518,6 +605,8 @@ export function PreJoin({
             <li>Audio Enabled: {`${userChoices.audioEnabled}`}</li>
             <li>Video Device: {`${userChoices.videoDeviceId}`}</li>
             <li>Audio Device: {`${userChoices.audioDeviceId}`}</li>
+            <li>Audio Status: {`${deviceStatus.audio}`}</li>
+            <li>Video Status: {`${deviceStatus.video}`}</li>
           </ul>
         </>
       )}
