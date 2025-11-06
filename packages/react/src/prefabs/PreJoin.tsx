@@ -15,12 +15,15 @@ import {
   Mutex,
 } from 'livekit-client';
 import * as React from 'react';
+import { getPrejoinTranslations, type PrejoinLanguage } from './prejoinTranslations';
 import { MediaDeviceMenu } from './MediaDeviceMenu';
 import { TrackToggle } from '../components/controls/TrackToggle';
-import type { LocalUserChoices } from '@livekit/components-core';
+import type { LocalUserChoices, DeviceStatus } from '@livekit/components-core';
 import { log } from '@livekit/components-core';
+import { ExclamationIcon } from '../assets/icons';
 import { ParticipantPlaceholder } from '../assets/images';
-import { useMediaDevices, usePersistentUserChoices, useDeviceState } from '../hooks';
+import { PermissionsModal } from '../components/PermissionsModal';
+import { useMediaDevices, usePersistentUserChoices } from '../hooks';
 import { useWarnAboutMissingStyles } from '../hooks/useWarnAboutMissingStyles';
 import { roomOptionsStringifyReplacer } from '../utils';
 import { useSelectedDevice } from '../hooks/useSelectedDevice';
@@ -85,6 +88,8 @@ export interface PreJoinProps
   micLabel?: string;
   camLabel?: string;
   userLabel?: string;
+  /** Language for built-in labels/text. */
+  language?: PrejoinLanguage;
   /**
    * If true, user choices are persisted across sessions.
    * @defaultValue true
@@ -98,6 +103,7 @@ export interface PreJoinProps
 export function usePreviewTracks(
   options: CreateLocalTracksOptions,
   onError?: (err: DevicePermissionError) => void,
+  setPermissionErrors?: React.Dispatch<React.SetStateAction<{ audio?: Error; video?: Error }>>,
 ) {
   const [audioTrack, setAudioTrack] = React.useState<LocalTrack | undefined>();
   const [videoTrack, setVideoTrack] = React.useState<LocalTrack | undefined>();
@@ -112,6 +118,21 @@ export function usePreviewTracks(
   );
 
   const trackLock = React.useMemo(() => new Mutex(), []);
+
+  // Utility to detect permission-denied style errors across browsers/wrappers
+  const isDeniedError = (err: Error | undefined): boolean => {
+    if (!err) return false;
+    const name = (err.name || '').toLowerCase();
+    const message = (err.message || '').toLowerCase();
+    return (
+      name.includes('notallowed') ||
+      name.includes('permissiondenied') ||
+      name.includes('security') ||
+      message.includes('permission denied') ||
+      message.includes('denied by system') ||
+      message.includes('blocked')
+    );
+  };
 
   // Store current tracks in refs to avoid dependency cycles
   const audioTrackRef = React.useRef<LocalTrack | undefined>(audioTrack);
@@ -130,8 +151,9 @@ export function usePreviewTracks(
   const handleTrackCreation = React.useCallback(
     (
       trackType: 'audio' | 'video',
-      trackOption: any | false,
+      trackOption: CreateLocalTracksOptions['audio'] | CreateLocalTracksOptions['video'] | false,
       setTrack: React.Dispatch<React.SetStateAction<LocalTrack | undefined>>,
+      setPermissionErrors: React.Dispatch<React.SetStateAction<{ audio?: Error; video?: Error }>>,
     ) => {
       if (!trackOption) {
         const currentTrack = trackType === 'audio' ? audioTrackRef.current : videoTrackRef.current;
@@ -143,23 +165,35 @@ export function usePreviewTracks(
         return;
       }
 
-      let needsCleanup = false;
+      let isCancelled = false;
       let localTrack: LocalTrack | undefined;
 
       trackLock.lock().then(async (unlock) => {
         try {
-          const trackOptions = {
-            audio: trackType === 'audio' ? trackOption : false,
-            video: trackType === 'video' ? trackOption : false,
+          // Check if cancelled before creating tracks
+          if (isCancelled) {
+            return;
+          }
+
+          const trackOptions: CreateLocalTracksOptions = {
+            audio:
+              trackType === 'audio' ? (trackOption as CreateLocalTracksOptions['audio']) : false,
+            video:
+              trackType === 'video' ? (trackOption as CreateLocalTracksOptions['video']) : false,
           };
 
           const tracks = await createLocalTracks(trackOptions);
 
+          // Check if cancelled after creating tracks
+          if (isCancelled) {
+            // Clean up the tracks we just created
+            tracks.forEach((track) => track.stop());
+            return;
+          }
+
           localTrack = tracks.find((track) => track.kind === trackType);
 
-          if (needsCleanup && localTrack) {
-            localTrack.stop();
-          } else if (localTrack) {
+          if (localTrack) {
             // Stop previous track if it exists
             const currentTrack =
               trackType === 'audio' ? audioTrackRef.current : videoTrackRef.current;
@@ -172,8 +206,21 @@ export function usePreviewTracks(
         } catch (e: unknown) {
           if (onError && e instanceof Error) {
             // Create enhanced error with device context
-            const enhancedError = new DevicePermissionError(e, trackType, trackOption?.deviceId);
+            const deviceId =
+              typeof trackOption === 'object' && trackOption !== null
+                ? typeof trackOption.deviceId === 'string'
+                  ? trackOption.deviceId
+                  : Array.isArray(trackOption.deviceId)
+                    ? trackOption.deviceId[0]
+                    : undefined
+                : undefined;
+            const enhancedError = new DevicePermissionError(e, trackType, deviceId);
             onError(enhancedError);
+
+            // Track permission errors for UI feedback
+            if (isDeniedError(e) || isDeniedError(enhancedError)) {
+              setPermissionErrors((prev) => ({ ...prev, [trackType]: enhancedError }));
+            }
           } else {
             log.error(e);
           }
@@ -183,7 +230,7 @@ export function usePreviewTracks(
       });
 
       return () => {
-        needsCleanup = true;
+        isCancelled = true;
         if (localTrack) {
           localTrack.stop();
         }
@@ -192,15 +239,35 @@ export function usePreviewTracks(
     [trackLock, onError, setOrphanTracks],
   );
 
+  // Memoize the stringified options to prevent unnecessary re-renders
+  const audioOptionsString = React.useMemo(
+    () => JSON.stringify(options.audio, roomOptionsStringifyReplacer),
+    [options.audio],
+  );
+  const videoOptionsString = React.useMemo(
+    () => JSON.stringify(options.video, roomOptionsStringifyReplacer),
+    [options.video],
+  );
+
   // Handle audio track
   React.useEffect(() => {
-    return handleTrackCreation('audio', options.audio, setAudioTrack);
-  }, [handleTrackCreation, JSON.stringify(options.audio, roomOptionsStringifyReplacer)]);
+    return handleTrackCreation(
+      'audio',
+      options.audio,
+      setAudioTrack,
+      setPermissionErrors || (() => {}),
+    );
+  }, [handleTrackCreation, audioOptionsString, setPermissionErrors]);
 
   // Handle video track
   React.useEffect(() => {
-    return handleTrackCreation('video', options.video, setVideoTrack);
-  }, [handleTrackCreation, JSON.stringify(options.video, roomOptionsStringifyReplacer)]);
+    return handleTrackCreation(
+      'video',
+      options.video,
+      setVideoTrack,
+      setPermissionErrors || (() => {}),
+    );
+  }, [handleTrackCreation, videoOptionsString, setPermissionErrors]);
 
   // Combine tracks for the return value
   const tracks = React.useMemo(() => {
@@ -341,14 +408,20 @@ export function PreJoin({
   onSubmit,
   onError,
   debug,
-  joinLabel = 'Join Room',
-  micLabel = 'Microphone',
-  camLabel = 'Camera',
-  userLabel = 'Username',
+  language = 'en',
+  joinLabel: joinLabelProp,
+  micLabel: micLabelProp,
+  camLabel: camLabelProp,
+  userLabel: userLabelProp,
   persistUserChoices = true,
   videoProcessor,
   ...htmlProps
 }: PreJoinProps) {
+  const t = getPrejoinTranslations(language);
+  const joinLabel = joinLabelProp ?? t.join;
+  const micLabel = micLabelProp ?? t.microphone;
+  const camLabel = camLabelProp ?? t.camera;
+  const userLabel = userLabelProp ?? t.username;
   const {
     userChoices: initialUserChoices,
     saveAudioInputDeviceId,
@@ -362,8 +435,9 @@ export function PreJoin({
     preventLoad: !persistUserChoices,
   });
 
-  // Get real-time device state
-  const { deviceStatus, isDeviceAvailable } = useDeviceState();
+  // Get device lists for availability checking (only when needed)
+  const audioDevices = useMediaDevices({ kind: 'audioinput' });
+  const videoDevices = useMediaDevices({ kind: 'videoinput' });
 
   const [userChoices, setUserChoices] = React.useState(initialUserChoices);
 
@@ -374,18 +448,73 @@ export function PreJoin({
   const [videoDeviceId, setVideoDeviceId] = React.useState<string>(userChoices.videoDeviceId);
   const [username, setUsername] = React.useState(userChoices.username);
 
-  // Automatically disable devices that aren't available
-  React.useEffect(() => {
-    if (!isDeviceAvailable('audio') && audioEnabled) {
-      setAudioEnabled(false);
-    }
-  }, [isDeviceAvailable, audioEnabled]);
+  // Track permission errors
+  const [permissionErrors, setPermissionErrors] = React.useState<{
+    audio?: Error;
+    video?: Error;
+  }>({});
 
-  React.useEffect(() => {
-    if (!isDeviceAvailable('video') && videoEnabled) {
-      setVideoEnabled(false);
-    }
-  }, [isDeviceAvailable, videoEnabled]);
+  // Track if we should show permission instructions modal
+  const [showPermissionModal, setShowPermissionModal] = React.useState<boolean>(false);
+
+  // Track which permissions are denied for modal content
+  const [deniedPermissions, setDeniedPermissions] = React.useState<{
+    audio: boolean;
+    video: boolean;
+  }>({ audio: false, video: false });
+
+  // Enhanced device availability and permission checking
+  const isDeviceAvailable = React.useCallback(
+    (type: 'audio' | 'video') => {
+      const devices = type === 'audio' ? audioDevices : videoDevices;
+      return devices.length > 0;
+    },
+    [audioDevices, videoDevices],
+  );
+
+  const hasPermissionError = React.useCallback(
+    (type: 'audio' | 'video') => {
+      return !!permissionErrors[type];
+    },
+    [permissionErrors],
+  );
+
+  const isPermissionDenied = React.useCallback(
+    (type: 'audio' | 'video') => {
+      const error = permissionErrors[type];
+      if (!error) return false;
+      const name = (error.name || '').toLowerCase();
+      const message = (error.message || '').toLowerCase();
+      return (
+        name.includes('notallowed') ||
+        name.includes('permissiondenied') ||
+        message.includes('permission denied') ||
+        message.includes('denied by system') ||
+        message.includes('blocked')
+      );
+    },
+    [permissionErrors],
+  );
+
+  // Create device status for LocalUserChoices compatibility
+  const deviceStatus = React.useMemo(
+    () =>
+      ({
+        audio: (() => {
+          if (hasPermissionError('audio')) {
+            return isPermissionDenied('audio') ? 'permission-denied' : 'error';
+          }
+          return isDeviceAvailable('audio') ? 'available' : 'no-devices';
+        })(),
+        video: (() => {
+          if (hasPermissionError('video')) {
+            return isPermissionDenied('video') ? 'permission-denied' : 'error';
+          }
+          return isDeviceAvailable('video') ? 'available' : 'no-devices';
+        })(),
+      }) as { audio: DeviceStatus; video: DeviceStatus },
+    [isDeviceAvailable, hasPermissionError, isPermissionDenied],
+  );
 
   // Save user choices to persistent storage.
   React.useEffect(() => {
@@ -406,17 +535,74 @@ export function PreJoin({
 
   const tracks = usePreviewTracks(
     {
-      audio:
-        audioEnabled && isDeviceAvailable('audio')
-          ? { deviceId: initialUserChoices.audioDeviceId }
-          : false,
-      video:
-        videoEnabled && isDeviceAvailable('video')
-          ? { deviceId: initialUserChoices.videoDeviceId, processor: videoProcessor }
-          : false,
+      audio: audioEnabled ? { deviceId: initialUserChoices.audioDeviceId } : false,
+      video: videoEnabled
+        ? { deviceId: initialUserChoices.videoDeviceId, processor: videoProcessor }
+        : false,
     },
     onError,
+    setPermissionErrors,
   );
+
+  // Initial permission check to detect if permissions are already denied
+  React.useEffect(() => {
+    const checkPermissions = async () => {
+      try {
+        // Try to access media streams to check permissions
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioStream.getTracks().forEach((track) => track.stop());
+
+        // If we get here, audio permission is granted
+        setPermissionErrors((prev) => ({ ...prev, audio: undefined }));
+      } catch (audioError) {
+        // Audio permission denied
+        if (audioError instanceof Error) {
+          setPermissionErrors((prev) => ({ ...prev, audio: audioError }));
+        }
+      }
+
+      try {
+        // Try to access video stream to check permissions
+        const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        videoStream.getTracks().forEach((track) => track.stop());
+
+        // If we get here, video permission is granted
+        setPermissionErrors((prev) => ({ ...prev, video: undefined }));
+      } catch (videoError) {
+        // Video permission denied
+        if (videoError instanceof Error) {
+          setPermissionErrors((prev) => ({ ...prev, video: videoError }));
+        }
+      }
+    };
+
+    checkPermissions();
+  }, []); // Run once on mount
+
+  // Debug logging (only when debug is enabled)
+  React.useEffect(() => {
+    if (debug) {
+      log.debug('PreJoin state:', {
+        audioEnabled,
+        videoEnabled,
+        audioDeviceId: initialUserChoices.audioDeviceId,
+        videoDeviceId: initialUserChoices.videoDeviceId,
+        tracks: tracks?.length || 0,
+        isDeviceAvailable: {
+          audio: isDeviceAvailable('audio'),
+          video: isDeviceAvailable('video'),
+        },
+      });
+    }
+  }, [
+    debug,
+    audioEnabled,
+    videoEnabled,
+    initialUserChoices.audioDeviceId,
+    initialUserChoices.videoDeviceId,
+    tracks,
+    isDeviceAvailable,
+  ]);
 
   const videoEl = React.useRef(null);
 
@@ -451,14 +637,15 @@ export function PreJoin({
   });
 
   React.useEffect(() => {
-    if (videoEl.current && videoTrack) {
+    const videoElement = videoEl.current;
+    if (videoElement && videoTrack) {
       videoTrack.unmute();
-      videoTrack.attach(videoEl.current);
+      videoTrack.attach(videoElement);
     }
 
     return () => {
       if (videoTrack) {
-        if (videoEl.current) videoTrack.detach(videoEl.current);
+        if (videoElement) videoTrack.detach(videoElement);
         videoTrack.stop();
       }
     };
@@ -522,6 +709,34 @@ export function PreJoin({
 
   useWarnAboutMissingStyles();
 
+  React.useEffect(() => {
+    if (!debug) return;
+    // Log only when key states change
+    // eslint-disable-next-line no-console
+    console.log({
+      permissionDeniedAudio: isPermissionDenied('audio'),
+      permissionErrorAudio: hasPermissionError('audio'),
+      permissionDeniedVideo: isPermissionDenied('video'),
+      permissionErrorVideo: hasPermissionError('video'),
+      audioEnabled,
+      videoEnabled,
+      permissionErrors,
+    });
+  }, [debug, permissionErrors, audioEnabled, videoEnabled, isPermissionDenied, hasPermissionError]);
+
+  // If permission becomes denied, stop attempting to create local tracks to avoid churn
+  React.useEffect(() => {
+    if (hasPermissionError('audio') && audioEnabled) {
+      setAudioEnabled(false);
+    }
+  }, [hasPermissionError, audioEnabled]);
+
+  React.useEffect(() => {
+    if (hasPermissionError('video') && videoEnabled) {
+      setVideoEnabled(false);
+    }
+  }, [hasPermissionError, videoEnabled]);
+
   return (
     <div className="lk-prejoin" {...htmlProps}>
       <div className="lk-video-container">
@@ -536,11 +751,32 @@ export function PreJoin({
       </div>
       <div className="lk-button-group-container">
         <div className="lk-button-group-pre-join audio">
-          <TrackToggle
-            initialState={audioEnabled}
-            source={Track.Source.Microphone}
-            onChange={(enabled) => setAudioEnabled(enabled)}
-          />
+          <div className="lk-track-toggle-container" style={{ position: 'relative' }}>
+            <TrackToggle
+              permissionDenied={hasPermissionError('audio')}
+              initialState={audioEnabled}
+              source={Track.Source.Microphone}
+              onClick={
+                hasPermissionError('audio')
+                  ? () => {
+                      setDeniedPermissions({
+                        audio: hasPermissionError('audio'),
+                        video: hasPermissionError('video'),
+                      });
+                      setShowPermissionModal(true);
+                    }
+                  : undefined
+              }
+              onChange={(enabled) => {
+                setAudioEnabled(enabled);
+              }}
+            />
+            {isPermissionDenied('audio') && (
+              <div className="lk-permission-warning-icon">
+                <ExclamationIcon />
+              </div>
+            )}
+          </div>
           <div className="lk-button-group-menu-pre-join">
             <label className="lk-selected-device-label">
               {selectedAudioDevice?.label || micLabel}
@@ -549,17 +785,38 @@ export function PreJoin({
           <MediaDeviceMenu
             initialSelection={audioDeviceId}
             kind="audioinput"
-            disabled={Boolean(!selectedAudioDevice) || !isDeviceAvailable('audio')}
+            disabled={Boolean(!selectedAudioDevice)}
             tracks={{ audioinput: audioTrack }}
             onActiveDeviceChange={(_, id) => setAudioDeviceId(id)}
           />
         </div>
         <div className="lk-button-group-pre-join video">
-          <TrackToggle
-            initialState={videoEnabled}
-            source={Track.Source.Camera}
-            onChange={(enabled) => setVideoEnabled(enabled)}
-          />
+          <div className="lk-track-toggle-container">
+            <TrackToggle
+              permissionDenied={hasPermissionError('video')}
+              initialState={videoEnabled}
+              source={Track.Source.Camera}
+              onClick={
+                hasPermissionError('video')
+                  ? () => {
+                      setDeniedPermissions({
+                        audio: hasPermissionError('audio'),
+                        video: hasPermissionError('video'),
+                      });
+                      setShowPermissionModal(true);
+                    }
+                  : undefined
+              }
+              onChange={(enabled) => {
+                setVideoEnabled(enabled);
+              }}
+            />
+            {isPermissionDenied('video') && (
+              <div className="lk-permission-warning-icon">
+                <ExclamationIcon />
+              </div>
+            )}
+          </div>
           <div className="lk-button-group-menu-pre-join">
             <label className="lk-selected-device-label">
               {selectedVideoDevice?.label || camLabel}
@@ -568,7 +825,7 @@ export function PreJoin({
           <MediaDeviceMenu
             initialSelection={videoDeviceId}
             kind="videoinput"
-            disabled={Boolean(!selectedAudioDevice) || !isDeviceAvailable('video')}
+            disabled={Boolean(!selectedVideoDevice)}
             tracks={{ videoinput: videoTrack }}
             onActiveDeviceChange={(_, id) => setVideoDeviceId(id)}
           />
@@ -598,17 +855,51 @@ export function PreJoin({
 
       {debug && (
         <>
-          <strong>User Choices:</strong>
+          <strong>{t.debugUserChoices}</strong>
           <ul className="lk-list" style={{ overflow: 'hidden', maxWidth: '15rem' }}>
-            <li>Username: {`${userChoices.username}`}</li>
-            <li>Video Enabled: {`${userChoices.videoEnabled}`}</li>
-            <li>Audio Enabled: {`${userChoices.audioEnabled}`}</li>
-            <li>Video Device: {`${userChoices.videoDeviceId}`}</li>
-            <li>Audio Device: {`${userChoices.audioDeviceId}`}</li>
-            <li>Audio Status: {`${deviceStatus.audio}`}</li>
-            <li>Video Status: {`${deviceStatus.video}`}</li>
+            <li>
+              {t.debugUsername}: {`${userChoices.username}`}
+            </li>
+            <li>
+              {t.debugVideoEnabled}: {`${userChoices.videoEnabled}`}
+            </li>
+            <li>
+              {t.debugAudioEnabled}: {`${userChoices.audioEnabled}`}
+            </li>
+            <li>
+              {t.debugVideoDevice}: {`${userChoices.videoDeviceId}`}
+            </li>
+            <li>
+              {t.debugAudioDevice}: {`${userChoices.audioDeviceId}`}
+            </li>
+            <li>
+              {t.debugAudioAvailable}: {`${isDeviceAvailable('audio')}`}
+            </li>
+            <li>
+              {t.debugVideoAvailable}: {`${isDeviceAvailable('video')}`}
+            </li>
+            <li>
+              {t.debugAudioPermDenied}: {`${isPermissionDenied('audio')}`}
+            </li>
+            <li>
+              {t.debugVideoPermDenied}: {`${isPermissionDenied('video')}`}
+            </li>
+            <li>
+              {t.debugAudioPermError}: {`${permissionErrors.audio?.name || 'none'}`}
+            </li>
+            <li>
+              {t.debugVideoPermError}: {`${permissionErrors.video?.name || 'none'}`}
+            </li>
           </ul>
         </>
+      )}
+
+      {showPermissionModal && (
+        <PermissionsModal
+          language={language}
+          deniedPermissions={deniedPermissions}
+          onClose={() => setShowPermissionModal(false)}
+        />
       )}
     </div>
   );
