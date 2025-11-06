@@ -23,7 +23,6 @@ const PreJoinExample: NextPage = () => {
 
   const handleValidate = (values: PreJoinValues) => {
     const isValid = Boolean(values.audioDeviceId || values.videoDeviceId);
-    console.log({ isValid, values });
     return isValid;
   };
 

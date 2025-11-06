@@ -18,15 +18,17 @@ import * as React from 'react';
 import { getPrejoinTranslations, type PrejoinLanguage } from './prejoinTranslations';
 import { MediaDeviceMenu } from './MediaDeviceMenu';
 import { TrackToggle } from '../components/controls/TrackToggle';
-import type { LocalUserChoices, DeviceStatus } from '@livekit/components-core';
+import type { LocalUserChoices } from '@livekit/components-core';
 import { log } from '@livekit/components-core';
-import { ExclamationIcon } from '../assets/icons';
 import { ParticipantPlaceholder } from '../assets/images';
 import { PermissionsModal } from '../components/PermissionsModal';
 import { useMediaDevices, usePersistentUserChoices } from '../hooks';
 import { useWarnAboutMissingStyles } from '../hooks/useWarnAboutMissingStyles';
 import { roomOptionsStringifyReplacer } from '../utils';
 import { useSelectedDevice } from '../hooks/useSelectedDevice';
+
+// Device status type definition
+type DeviceStatus = 'available' | 'permission-denied' | 'no-devices' | 'disabled' | 'error';
 
 /**
  * Enhanced error class that includes device information for better error handling.
@@ -751,32 +753,25 @@ export function PreJoin({
       </div>
       <div className="lk-button-group-container">
         <div className="lk-button-group-pre-join audio">
-          <div className="lk-track-toggle-container" style={{ position: 'relative' }}>
-            <TrackToggle
-              permissionDenied={hasPermissionError('audio')}
-              initialState={audioEnabled}
-              source={Track.Source.Microphone}
-              onClick={
-                hasPermissionError('audio')
-                  ? () => {
-                      setDeniedPermissions({
-                        audio: hasPermissionError('audio'),
-                        video: hasPermissionError('video'),
-                      });
-                      setShowPermissionModal(true);
-                    }
-                  : undefined
-              }
-              onChange={(enabled) => {
-                setAudioEnabled(enabled);
-              }}
-            />
-            {isPermissionDenied('audio') && (
-              <div className="lk-permission-warning-icon">
-                <ExclamationIcon />
-              </div>
-            )}
-          </div>
+          <TrackToggle
+            permissionDenied={hasPermissionError('audio')}
+            initialState={audioEnabled}
+            source={Track.Source.Microphone}
+            onClick={
+              hasPermissionError('audio')
+                ? () => {
+                    setDeniedPermissions({
+                      audio: hasPermissionError('audio'),
+                      video: hasPermissionError('video'),
+                    });
+                    setShowPermissionModal(true);
+                  }
+                : undefined
+            }
+            onChange={(enabled) => {
+              setAudioEnabled(enabled);
+            }}
+          />
           <div className="lk-button-group-menu-pre-join">
             <label className="lk-selected-device-label">
               {selectedAudioDevice?.label || micLabel}
@@ -791,32 +786,25 @@ export function PreJoin({
           />
         </div>
         <div className="lk-button-group-pre-join video">
-          <div className="lk-track-toggle-container">
-            <TrackToggle
-              permissionDenied={hasPermissionError('video')}
-              initialState={videoEnabled}
-              source={Track.Source.Camera}
-              onClick={
-                hasPermissionError('video')
-                  ? () => {
-                      setDeniedPermissions({
-                        audio: hasPermissionError('audio'),
-                        video: hasPermissionError('video'),
-                      });
-                      setShowPermissionModal(true);
-                    }
-                  : undefined
-              }
-              onChange={(enabled) => {
-                setVideoEnabled(enabled);
-              }}
-            />
-            {isPermissionDenied('video') && (
-              <div className="lk-permission-warning-icon">
-                <ExclamationIcon />
-              </div>
-            )}
-          </div>
+          <TrackToggle
+            permissionDenied={hasPermissionError('video')}
+            initialState={videoEnabled}
+            source={Track.Source.Camera}
+            onClick={
+              hasPermissionError('video')
+                ? () => {
+                    setDeniedPermissions({
+                      audio: hasPermissionError('audio'),
+                      video: hasPermissionError('video'),
+                    });
+                    setShowPermissionModal(true);
+                  }
+                : undefined
+            }
+            onChange={(enabled) => {
+              setVideoEnabled(enabled);
+            }}
+          />
           <div className="lk-button-group-menu-pre-join">
             <label className="lk-selected-device-label">
               {selectedVideoDevice?.label || camLabel}

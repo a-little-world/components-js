@@ -1,5 +1,6 @@
 import type { CaptureOptionsBySource, ToggleSource } from '@livekit/components-core';
 import * as React from 'react';
+import { ExclamationIcon } from '../../assets/icons';
 import { getSourceIcon } from '../../assets/icons/util';
 import { useTrackToggle } from '../../hooks';
 import type { TrackPublishOptions } from 'livekit-client';
@@ -35,49 +36,56 @@ export interface TrackToggleProps<T extends ToggleSource>
  * ```
  * @public
  */
-function TrackToggleEnabled<T extends ToggleSource>(
-  { showIcon, ...props }: TrackToggleProps<T>,
+export const TrackToggle = React.forwardRef(function TrackToggle<T extends ToggleSource>(
+  { showIcon, permissionDenied: permissionDeniedProp, ...props }: TrackToggleProps<T>,
   ref: React.ForwardedRef<HTMLButtonElement>,
 ) {
-  const { buttonProps, enabled } = useTrackToggle(props);
+  const {
+    buttonProps,
+    enabled,
+    permissionDenied: permissionDeniedFromHook,
+  } = useTrackToggle(props);
   const [isClient, setIsClient] = React.useState(false);
+
   React.useEffect(() => {
     setIsClient(true);
   }, []);
+
   if (!isClient) return null;
-  return (
-    <button ref={ref} {...buttonProps}>
-      {(showIcon ?? true) && getSourceIcon(props.source, enabled)}
-      {props.children}
-    </button>
-  );
-}
 
-const TrackToggleEnabledForward = React.forwardRef(TrackToggleEnabled) as <T extends ToggleSource>(
-  props: TrackToggleProps<T> & React.RefAttributes<HTMLButtonElement>,
-) => React.ReactElement | null;
+  // Use prop if provided, otherwise use hook's automatic detection - Prop needed when no room instance is available
+  const isPermissionDenied = permissionDeniedProp ?? permissionDeniedFromHook;
 
-export const TrackToggle = React.forwardRef(function Wrapper<T extends ToggleSource>(
-  { permissionDenied, showIcon, ...props }: TrackToggleProps<T>,
-  ref: React.ForwardedRef<HTMLButtonElement>,
-) {
-  if (permissionDenied) {
+  if (isPermissionDenied) {
+    const buttonClassName = ['lk-permission-denied', 'lk-button', props.className]
+      .filter(Boolean)
+      .join(' ');
+
     return (
       <button
         ref={ref}
         aria-pressed={false}
         data-lk-source={props.source}
-        className={`lk-permission-denied lk-button`.trim()}
+        className={buttonClassName}
         onClick={props.onClick}
         type={props.type}
         disabled={props.disabled}
       >
         {(showIcon ?? true) && getSourceIcon(props.source, false)}
         {props.children}
+        <div className="lk-permission-warning-icon">
+          <ExclamationIcon />
+        </div>
       </button>
     );
   }
-  return <TrackToggleEnabledForward showIcon={showIcon} {...props} ref={ref} />;
+
+  return (
+    <button ref={ref} {...buttonProps}>
+      {(showIcon ?? true) && getSourceIcon(props.source, enabled)}
+      {props.children}
+    </button>
+  );
 }) as <T extends ToggleSource>(
   props: TrackToggleProps<T> & React.RefAttributes<HTMLButtonElement>,
 ) => React.ReactElement | null;

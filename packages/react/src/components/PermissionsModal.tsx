@@ -50,7 +50,8 @@ export function PermissionsModal({
 
         <div className="lk-permission-modal-content-container">
           <h3 className="lk-permission-modal-title">
-            {deniedPermissions.audio && deniedPermissions.video
+            {(deniedPermissions.audio && deniedPermissions.video) ||
+            (!deniedPermissions.audio && !deniedPermissions.video)
               ? t.permissionTitleBoth
               : deniedPermissions.audio
                 ? t.permissionTitleMic
@@ -58,7 +59,8 @@ export function PermissionsModal({
           </h3>
           <p className="lk-permission-modal-description">
             {`${
-              deniedPermissions.audio && deniedPermissions.video
+              (deniedPermissions.audio && deniedPermissions.video) ||
+              (!deniedPermissions.audio && !deniedPermissions.video)
                 ? t.blockedBoth
                 : deniedPermissions.audio
                   ? t.blockedMic
@@ -68,7 +70,8 @@ export function PermissionsModal({
           <ol className="lk-permission-modal-instructions">
             <li>{t.step1}</li>
             <li>
-              {deniedPermissions.audio && deniedPermissions.video
+              {(deniedPermissions.audio && deniedPermissions.video) ||
+              (!deniedPermissions.audio && !deniedPermissions.video)
                 ? t.step2Both
                 : deniedPermissions.audio
                   ? t.step2Mic

@@ -1,5 +1,6 @@
 import type { ToggleSource } from '@livekit/components-core';
 import { setupMediaToggle, setupManualToggle, log } from '@livekit/components-core';
+import { Track, RoomEvent } from 'livekit-client';
 import * as React from 'react';
 import type { TrackToggleProps } from '../components';
 import { useMaybeRoomContext } from '../context';
@@ -34,6 +35,7 @@ export function useTrackToggle<T extends ToggleSource>({
   const track = room?.localParticipant?.getTrackPublication(source);
   /** `true` if a user interaction such as a click on the TrackToggle button has occurred. */
   const userInteractionRef = React.useRef(false);
+  const [permissionDenied, setPermissionDenied] = React.useState(false);
 
   const { toggle, className, pendingObserver, enabledObserver } = React.useMemo(
     () =>
@@ -45,6 +47,47 @@ export function useTrackToggle<T extends ToggleSource>({
 
   const pending = useObservableState(pendingObserver, false);
   const enabled = useObservableState(enabledObserver, initialState ?? !!track?.isEnabled);
+
+  // Listen for device errors to detect permission denied
+  React.useEffect(() => {
+    if (!room) return;
+
+    const handleDeviceError = (error: Error, kind?: MediaDeviceKind) => {
+      // Check if it's a permission denied error
+      const name = (error.name || '').toLowerCase();
+      const message = (error.message || '').toLowerCase();
+      const isPermissionError =
+        name.includes('notallowed') ||
+        name.includes('permissiondenied') ||
+        name.includes('security') ||
+        message.includes('permission denied') ||
+        message.includes('denied by system') ||
+        message.includes('blocked');
+
+      if (!isPermissionError) return;
+
+      // Determine if this error is for the current source
+      const errorMsg = message;
+      const isMicrophoneError =
+        kind === 'audioinput' || errorMsg.includes('microphone') || errorMsg.includes('audio');
+      const isCameraError =
+        kind === 'videoinput' || errorMsg.includes('camera') || errorMsg.includes('video');
+
+      if (
+        (source === Track.Source.Microphone && isMicrophoneError) ||
+        (source === Track.Source.Camera && isCameraError)
+      ) {
+        setPermissionDenied(true);
+      }
+    };
+
+    // Listen to room MediaDevicesError events
+    room.on(RoomEvent.MediaDevicesError, handleDeviceError);
+
+    return () => {
+      room.off(RoomEvent.MediaDevicesError, handleDeviceError);
+    };
+  }, [room, source]);
 
   React.useEffect(() => {
     onChange?.(enabled, userInteractionRef.current);
@@ -75,13 +118,14 @@ export function useTrackToggle<T extends ToggleSource>({
     toggle,
     enabled,
     pending,
+    permissionDenied,
     track,
     buttonProps: {
       ...newProps,
       'aria-pressed': enabled,
       'data-lk-source': source,
       'data-lk-enabled': enabled,
-      disabled: pending,
+      disabled: pending || (permissionDenied && !rest.onClick),
       onClick: clickHandler,
     } as React.ButtonHTMLAttributes<HTMLButtonElement>,
   };
