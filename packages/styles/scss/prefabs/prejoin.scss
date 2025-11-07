@@ -80,6 +80,16 @@
     }
   }
 
+  .button-menu {
+    height: 100%;
+  }
+
+  /* Safari fix for button groups */
+  .button-group-pre-join,
+  .button-group-menu-pre-join {
+    height: auto;
+  }
+
   .username-container {
     display: flex;
     flex-direction: column;

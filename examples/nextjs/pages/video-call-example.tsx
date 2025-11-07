@@ -405,12 +405,8 @@ function VideoCallExample() {
   useEffect(() => {
     setCallData({
       uuid: 'test-room-' + Date.now(),
-      token:
-        process.env.NEXT_PUBLIC_LIVEKIT_TOKEN ||
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZGVudGl0eSI6IiIsIm5hbWUiOiJUaW0gUyIsInZpZGVvIjp7InJvb21DcmVhdGUiOmZhbHNlLCJyb29tTGlzdCI6ZmFsc2UsInJvb21SZWNvcmQiOmZhbHNlLCJyb29tQWRtaW4iOmZhbHNlLCJyb29tSm9pbiI6dHJ1ZSwicm9vbSI6Ijc3OTJkYmRmLWZlNTAtNGViYy04MmFkLWVkNTE4ZDc1YWNlZCIsImNhblB1Ymxpc2giOnRydWUsImNhblN1YnNjcmliZSI6dHJ1ZSwiY2FuUHVibGlzaERhdGEiOnRydWUsImNhblB1Ymxpc2hTb3VyY2VzIjpbXSwiY2FuVXBkYXRlT3duTWV0YWRhdGEiOmZhbHNlLCJpbmdyZXNzQWRtaW4iOmZhbHNlLCJoaWRkZW4iOmZhbHNlLCJyZWNvcmRlciI6ZmFsc2UsImFnZW50IjpmYWxzZX0sIm1ldGFkYXRhIjoiIiwic2hhMjU2IjoiIiwic3ViIjoiNzVjNjIzZWQtOWM5Yi00YWRlLWFmMTQtNGVkYmY4NjM4ODI4LTAxNjQ3ODE4LTI1NjAtNGI3MS04ZmUxLTMzYzY4NjIwYzIwMCIsImlzcyI6IkFQSUpKQ044cXRxdmdMZSIsIm5iZiI6MTc2MjQ2MzA3NSwiZXhwIjoxNzYyNDg0Njc1fQ.t2ztXPYKospFMr-Rf1Egh2DsUa-xb3VDdMrlIUJ7qUw',
-      livekitServerUrl:
-        process.env.NEXT_PUBLIC_LK_SERVER_URL ||
-        'https://littleworld-development-4tq43oit.livekit.cloud',
+      token: process.env.NEXT_PUBLIC_LIVEKIT_TOKEN || '',
+      livekitServerUrl: process.env.NEXT_PUBLIC_LK_SERVER_URL || '',
       audioOptions: { echoCancellation: true, noiseSuppression: true },
       videoOptions: { resolution: { width: 1280, height: 720 } },
     });
