@@ -251,25 +251,19 @@ export function usePreviewTracks(
     [options.video],
   );
 
+  // Create stable fallback function for setPermissionErrors
+  const noopSetPermissionErrors = React.useCallback(() => {}, []);
+  const stableSetPermissionErrors = setPermissionErrors || noopSetPermissionErrors;
+
   // Handle audio track
   React.useEffect(() => {
-    return handleTrackCreation(
-      'audio',
-      options.audio,
-      setAudioTrack,
-      setPermissionErrors || (() => {}),
-    );
-  }, [handleTrackCreation, audioOptionsString, setPermissionErrors]);
+    return handleTrackCreation('audio', options.audio, setAudioTrack, stableSetPermissionErrors);
+  }, [handleTrackCreation, audioOptionsString, stableSetPermissionErrors]);
 
   // Handle video track
   React.useEffect(() => {
-    return handleTrackCreation(
-      'video',
-      options.video,
-      setVideoTrack,
-      setPermissionErrors || (() => {}),
-    );
-  }, [handleTrackCreation, videoOptionsString, setPermissionErrors]);
+    return handleTrackCreation('video', options.video, setVideoTrack, stableSetPermissionErrors);
+  }, [handleTrackCreation, videoOptionsString, stableSetPermissionErrors]);
 
   // Combine tracks for the return value
   const tracks = React.useMemo(() => {

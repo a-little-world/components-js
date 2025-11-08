@@ -123,3 +123,29 @@
     height: 100%;
   }
 }
+
+.button-group-menu-pre-join {
+  @extend .button-group-menu;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
+
+  > label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.button-menu {
+  @extend .button-menu;
+  &::after {
+    margin-left: 0;
+  }
+}
