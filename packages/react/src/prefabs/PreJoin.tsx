@@ -78,10 +78,11 @@ export interface PreJoinProps
    */
   onValidate?: (values: PreJoinValues) => boolean;
   /**
-   * Called when an error occurs during device setup. The error will be a `DevicePermissionError`
-   * that includes information about which device type failed and the original error.
+   * Called when an error occurs during device setup. Permission errors will be wrapped in
+   * `DevicePermissionError` with device context. Other errors (NotFoundError, NotReadableError, etc.)
+   * are passed through as-is.
    */
-  onError?: (error: DevicePermissionError) => void;
+  onError?: (error: Error) => void;
   /** Prefill the input form with initial values. */
   defaults?: Partial<LocalUserChoices>;
   /** Display a debug window for your convenience. */
@@ -104,7 +105,7 @@ export interface PreJoinProps
 /** @public */
 export function usePreviewTracks(
   options: CreateLocalTracksOptions,
-  onError?: (err: DevicePermissionError) => void,
+  onError?: (err: Error) => void,
   setPermissionErrors?: React.Dispatch<React.SetStateAction<{ audio?: Error; video?: Error }>>,
 ) {
   const [audioTrack, setAudioTrack] = React.useState<LocalTrack | undefined>();
@@ -157,7 +158,10 @@ export function usePreviewTracks(
       setTrack: React.Dispatch<React.SetStateAction<LocalTrack | undefined>>,
       setPermissionErrors: React.Dispatch<React.SetStateAction<{ audio?: Error; video?: Error }>>,
     ) => {
+      log.debug(`[PreJoin] handleTrackCreation called for ${trackType}`, { trackOption });
+
       if (!trackOption) {
+        log.debug(`[PreJoin] ${trackType} track disabled, skipping creation`);
         const currentTrack = trackType === 'audio' ? audioTrackRef.current : videoTrackRef.current;
 
         if (currentTrack) {
@@ -172,8 +176,11 @@ export function usePreviewTracks(
 
       trackLock.lock().then(async (unlock) => {
         try {
+          log.debug(`[PreJoin] Attempting to create ${trackType} track`);
+
           // Check if cancelled before creating tracks
           if (isCancelled) {
+            log.debug(`[PreJoin] ${trackType} track creation cancelled before start`);
             return;
           }
 
@@ -184,7 +191,9 @@ export function usePreviewTracks(
               trackType === 'video' ? (trackOption as CreateLocalTracksOptions['video']) : false,
           };
 
+          log.debug(`[PreJoin] Calling createLocalTracks for ${trackType}`, trackOptions);
           const tracks = await createLocalTracks(trackOptions);
+          log.debug(`[PreJoin] Successfully created ${trackType} track`);
 
           // Check if cancelled after creating tracks
           if (isCancelled) {
@@ -206,8 +215,10 @@ export function usePreviewTracks(
             setTrack(localTrack);
           }
         } catch (e: unknown) {
+          log.error(`[PreJoin] Error creating ${trackType} track:`, e);
+
           if (onError && e instanceof Error) {
-            // Create enhanced error with device context
+            // Extract device ID for error context
             const deviceId =
               typeof trackOption === 'object' && trackOption !== null
                 ? typeof trackOption.deviceId === 'string'
@@ -216,12 +227,24 @@ export function usePreviewTracks(
                     ? trackOption.deviceId[0]
                     : undefined
                 : undefined;
-            const enhancedError = new DevicePermissionError(e, trackType, deviceId);
-            onError(enhancedError);
 
-            // Track permission errors for UI feedback
-            if (isDeniedError(e) || isDeniedError(enhancedError)) {
+            // Wrap permission errors with enhanced context
+            if (isDeniedError(e)) {
+              log.debug(`[PreJoin] ${trackType} permission denied, calling onError`);
+              const enhancedError = new DevicePermissionError(e, trackType, deviceId);
+              onError(enhancedError);
+
+              // Track permission errors for UI feedback
               setPermissionErrors((prev) => ({ ...prev, [trackType]: enhancedError }));
+            } else {
+              // For other errors (NotFoundError, NotReadableError, etc.),
+              // still wrap with device context so consumers know which track failed
+              log.debug(
+                `[PreJoin] ${trackType} error (non-permission), calling onError with context`,
+              );
+              const errorWithContext = new DevicePermissionError(e, trackType, deviceId);
+              errorWithContext.name = e.name; // Preserve original error name
+              onError(errorWithContext);
             }
           } else {
             log.error(e);
@@ -554,6 +577,11 @@ export function PreJoin({
         // Audio permission denied
         if (audioError instanceof Error) {
           setPermissionErrors((prev) => ({ ...prev, audio: audioError }));
+
+          if (onError) {
+            const enhancedError = new DevicePermissionError(audioError, 'audio');
+            onError(enhancedError);
+          }
         }
       }
 
@@ -568,12 +596,17 @@ export function PreJoin({
         // Video permission denied
         if (videoError instanceof Error) {
           setPermissionErrors((prev) => ({ ...prev, video: videoError }));
+
+          if (onError) {
+            const enhancedError = new DevicePermissionError(videoError, 'video');
+            onError(enhancedError);
+          }
         }
       }
     };
 
     checkPermissions();
-  }, []); // Run once on mount
+  }, [onError]); // Run once on mount
 
   // Debug logging (only when debug is enabled)
   React.useEffect(() => {
@@ -721,17 +754,22 @@ export function PreJoin({
   }, [debug, permissionErrors, audioEnabled, videoEnabled, isPermissionDenied, hasPermissionError]);
 
   // If permission becomes denied, stop attempting to create local tracks to avoid churn
-  React.useEffect(() => {
-    if (hasPermissionError('audio') && audioEnabled) {
-      setAudioEnabled(false);
-    }
-  }, [hasPermissionError, audioEnabled]);
+  const audioPermissionDenied = hasPermissionError('audio');
+  const videoPermissionDenied = hasPermissionError('video');
 
   React.useEffect(() => {
-    if (hasPermissionError('video') && videoEnabled) {
+    if (audioPermissionDenied && audioEnabled) {
+      setAudioEnabled(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioPermissionDenied]); // Only depend on permission state, not audioEnabled
+
+  React.useEffect(() => {
+    if (videoPermissionDenied && videoEnabled) {
       setVideoEnabled(false);
     }
-  }, [hasPermissionError, videoEnabled]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoPermissionDenied]); // Only depend on permission state, not videoEnabled
 
   return (
     <div className="lk-prejoin" {...htmlProps}>
@@ -763,7 +801,10 @@ export function PreJoin({
                 : undefined
             }
             onChange={(enabled) => {
-              setAudioEnabled(enabled);
+              // Only update if not in permission denied state to avoid toggle loops
+              if (!hasPermissionError('audio')) {
+                setAudioEnabled(enabled);
+              }
             }}
           />
           <div className="lk-button-group-menu-pre-join">
@@ -796,7 +837,10 @@ export function PreJoin({
                 : undefined
             }
             onChange={(enabled) => {
-              setVideoEnabled(enabled);
+              // Only update if not in permission denied state to avoid toggle loops
+              if (!hasPermissionError('video')) {
+                setVideoEnabled(enabled);
+              }
             }}
           />
           <div className="lk-button-group-menu-pre-join">

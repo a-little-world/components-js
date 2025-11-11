@@ -405,8 +405,8 @@ function VideoCallExample() {
   useEffect(() => {
     setCallData({
       uuid: 'test-room-' + Date.now(),
-      token: process.env.NEXT_PUBLIC_LIVEKIT_TOKEN || '',
-      livekitServerUrl: process.env.NEXT_PUBLIC_LK_SERVER_URL || '',
+      token: process?.env?.NEXT_PUBLIC_LIVEKIT_TOKEN || '',
+      livekitServerUrl: process?.env?.NEXT_PUBLIC_LK_SERVER_URL || '',
       audioOptions: { echoCancellation: true, noiseSuppression: true },
       videoOptions: { resolution: { width: 1280, height: 720 } },
     });
@@ -422,12 +422,13 @@ function VideoCallExample() {
 
   const handleError = (err: Error) => {
     setError(err.message);
-
     if (err instanceof DevicePermissionError) {
-      setDeniedPermissions({
-        audio: err.deviceType === 'audio',
-        video: err.deviceType === 'video',
-      });
+      // Merge the new error with existing permissions instead of replacing
+      setDeniedPermissions((prev) => ({
+        ...prev,
+        audio: err.deviceType === 'audio' ? true : prev.audio,
+        video: err.deviceType === 'video' ? true : prev.video,
+      }));
       setShowPermissionModal(true);
     }
   };

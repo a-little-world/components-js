@@ -51,10 +51,10 @@ export const TrackToggle = React.forwardRef(function TrackToggle<T extends Toggl
     setIsClient(true);
   }, []);
 
-  if (!isClient) return null;
-
   // Use prop if provided, otherwise use hook's automatic detection - Prop needed when no room instance is available
   const isPermissionDenied = permissionDeniedProp ?? permissionDeniedFromHook;
+
+  if (!isClient) return null;
 
   if (isPermissionDenied) {
     const buttonClassName = ['lk-permission-denied', 'lk-button', props.className]
