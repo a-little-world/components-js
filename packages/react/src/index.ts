@@ -30,4 +30,5 @@ export type {
 
 // Export types from React package
 export type { PreJoinValues } from './prefabs/PreJoin';
+export type { PrejoinLanguage } from './prefabs/prejoinTranslations';
 export { DevicePermissionError } from './prefabs/PreJoin';

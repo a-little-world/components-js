@@ -174,8 +174,10 @@ const disconnectBtnStyle: React.CSSProperties = {
 
 function ControlBar({
   onPermissionModalOpen,
+  hide,
 }: {
   onPermissionModalOpen?: (permissions: { audio: boolean; video: boolean }) => void;
+  hide?: boolean;
 }) {
   const { buttonProps: disconnectProps } = useDisconnectButton({});
   const { permissionDenied: audioPermissionDenied } = useTrackToggle({
@@ -197,12 +199,15 @@ function ControlBar({
     }),
   });
 
+  if (hide) return null;
+
   return (
     <div style={barStyle}>
       <div style={getMediaControlStyle(audioPermissionDenied)}>
         <TrackToggle
           source={Track.Source.Microphone}
           showIcon
+          permissionDenied={audioPermissionDenied}
           onClick={audioPermissionDenied ? handleOpenPermissionModal : undefined}
           className={audioPermissionDenied ? 'permission-denied-toggle' : undefined}
         />
@@ -212,6 +217,7 @@ function ControlBar({
         <TrackToggle
           source={Track.Source.Camera}
           showIcon
+          permissionDenied={videoPermissionDenied}
           onClick={videoPermissionDenied ? handleOpenPermissionModal : undefined}
           className={videoPermissionDenied ? 'permission-denied-toggle' : undefined}
         />
@@ -325,11 +331,15 @@ function MyVideoConference({
   partnerName,
   selfLabel,
   onPermissionModalOpen,
+  callRejected,
+  onCallAgain,
 }: {
   partnerLabel?: string;
   partnerName?: string;
   selfLabel?: string;
   onPermissionModalOpen?: (permissions: { audio: boolean; video: boolean }) => void;
+  callRejected?: boolean;
+  onCallAgain?: () => void;
 }) {
   // `useTracks` returns all camera and screen share tracks. If a user
   // joins without a published camera track, a placeholder track is returned.
@@ -338,6 +348,7 @@ function MyVideoConference({
   });
   const [currentParticipants, setCurrentParticipants] = useState(1);
   const [otherUserDisconnected, setOtherUserDisconnected] = useState(false);
+  const { buttonProps: disconnectProps } = useDisconnectButton({});
 
   useEffect(() => {
     if (tracks.length === 1 && currentParticipants > 1) setOtherUserDisconnected(true);
@@ -359,22 +370,55 @@ function MyVideoConference({
 
   return (
     <div style={videosStyle}>
-      <GridLayout tracks={tracks} style={{ height: '100%' }} className="custom-grid-layout">
-        <ParticipantTile placeholders={placeholders} />
-      </GridLayout>
+      {!callRejected && (
+        <GridLayout tracks={tracks} style={{ height: '100%' }} className="custom-grid-layout">
+          <ParticipantTile placeholders={placeholders} />
+        </GridLayout>
+      )}
 
       {tracks.length === 1 && (
         <div style={waitingTileStyle}>
           <ProfileImage circle label={partnerLabel} size="medium" />
-          <Text type="body4">
-            {otherUserDisconnected
-              ? `${partnerName || 'Participant'} disconnected`
-              : `Waiting for ${partnerName || 'other participant'}...`}
-          </Text>
+          {callRejected ? (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '16px',
+                maxWidth: '400px',
+              }}
+            >
+              <Text type="body4">
+                <strong>{partnerName || 'Participant'}</strong>
+              </Text>
+              <Text type="body4">rejected the call</Text>
+              <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+                <button {...disconnectProps} style={disconnectBtnStyle}>
+                  Exit
+                </button>
+                <button
+                  onClick={onCallAgain}
+                  style={{
+                    ...disconnectBtnStyle,
+                    background: 'linear-gradient(135deg, #4ade80 0%, #22c55e 100%)',
+                  }}
+                >
+                  Call Again
+                </button>
+              </div>
+            </div>
+          ) : (
+            <Text type="body4">
+              {otherUserDisconnected
+                ? `${partnerName || 'Participant'} disconnected`
+                : `Waiting for ${partnerName || 'other participant'}...`}
+            </Text>
+          )}
         </div>
       )}
 
-      <ControlBar onPermissionModalOpen={onPermissionModalOpen} />
+      <ControlBar hide={callRejected} onPermissionModalOpen={onPermissionModalOpen} />
     </div>
   );
 }
@@ -433,6 +477,14 @@ function VideoCallExample() {
     }
   };
 
+  const handleCallAgain = () => {
+    setCallRejected(false);
+  };
+
+  const handleSimulateRejection = () => {
+    setCallRejected(true);
+  };
+
   if (!callData) {
     return (
       <div
@@ -464,7 +516,7 @@ function VideoCallExample() {
         <p style={{ margin: '0 0 10px 0', color: 'white' }}>
           <strong>Status:</strong>{' '}
           <span style={{ color: isConnected ? '#4ade80' : '#fb923c' }}>
-            {isConnected ? 'Connected' : 'Connecting...'}
+            {callRejected ? 'Call Rejected' : isConnected ? 'Connected' : 'Connecting...'}
           </span>
         </p>
         <p style={{ margin: '0 0 10px 0', fontSize: '12px', color: '#9ca3af' }}>
@@ -491,6 +543,22 @@ function VideoCallExample() {
           <p style={{ margin: '5px 0' }}>
             <strong>Video Options:</strong> {JSON.stringify(callData?.videoOptions || {})}
           </p>
+          <button
+            onClick={handleSimulateRejection}
+            disabled={callRejected}
+            style={{
+              marginTop: '10px',
+              padding: '8px 16px',
+              backgroundColor: callRejected ? '#666' : '#fb923c',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: callRejected ? 'not-allowed' : 'pointer',
+              fontSize: '12px',
+            }}
+          >
+            {callRejected ? 'Call Rejected' : 'Simulate Call Rejection'}
+          </button>
         </div>
       </div>
 
@@ -518,6 +586,8 @@ function VideoCallExample() {
             partnerName={partnerProfile.name}
             partnerLabel={partnerProfile.label}
             selfLabel={profile.label}
+            callRejected={callRejected}
+            onCallAgain={handleCallAgain}
             onPermissionModalOpen={(permissions) => {
               setDeniedPermissions(permissions);
               setShowPermissionModal(true);
