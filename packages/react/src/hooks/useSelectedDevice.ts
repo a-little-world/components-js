@@ -30,7 +30,11 @@ export function useSelectedDevice<T extends LocalVideoTrack | LocalAudioTrack>({
 }) {
   const [deviceError, setDeviceError] = React.useState<Error | null>(null);
 
-  const devices = useMediaDevices({ kind });
+  // Request permissions when no track exists to get device labels
+  const devices = useMediaDevices({
+    kind,
+    requestPermissions: !track,
+  });
   const [selectedDevice, setSelectedDevice] = React.useState<MediaDeviceInfo | undefined>(
     undefined,
   );

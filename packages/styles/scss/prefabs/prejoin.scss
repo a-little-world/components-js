@@ -20,7 +20,7 @@
     height: auto;
     aspect-ratio: 16 / 10;
     background-color: black;
-    border-radius: var(--lk-border-radius);
+    border-radius: var(--border-radius);
     overflow: hidden;
     video,
     .camera-off-note {
@@ -68,7 +68,7 @@
       width: 100%;
     }
   }
-  
+
   @media (max-width: 600px) {
     .button-group-container {
       display: flex;
@@ -78,6 +78,16 @@
         width: 100%;
       }
     }
+  }
+
+  .button-menu {
+    height: 100%;
+  }
+
+  /* Safari fix for button groups */
+  .button-group-pre-join,
+  .button-group-menu-pre-join {
+    height: auto;
   }
 
   .username-container {

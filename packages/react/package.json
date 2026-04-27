@@ -1,6 +1,6 @@
 {
   "name": "@livekit/components-react",
-  "version": "2.9.14",
+  "version": "2.9.16",
   "license": "Apache-2.0",
   "author": "LiveKit",
   "repository": {
@@ -52,13 +52,13 @@
   },
   "typings": "dist/index.d.ts",
   "dependencies": {
-    "@livekit/components-core": "workspace:*",
+    "@livekit/components-core": "^0.12.9",
     "clsx": "2.1.1",
     "usehooks-ts": "3.1.1"
   },
   "peerDependencies": {
     "@livekit/krisp-noise-filter": "^0.2.12 || ^0.3.0",
-    "livekit-client": "catalog:",
+    "livekit-client": "^2.13.3",
     "react": ">=18",
     "react-dom": ">=18",
     "tslib": "^2.6.2"
